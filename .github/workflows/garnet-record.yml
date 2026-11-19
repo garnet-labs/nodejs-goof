@@ -41,8 +41,29 @@ jobs:
       # and the action falls back to a local, best-effort record.
       - uses: garnet-org/action@673a06d87748bec49e4d8df22d371b2a3420aba4 # v2.5.2
 
+      # CI may reach only package registries. Lifecycle scripts run for every
+      # package except those in SKIP_INSTALL_SCRIPTS: snyk's postinstall
+      # downloads its CLI binary from downloads.snyk.io and reports download
+      # errors to Sentry. node-gyp builds against the local Node headers
+      # instead of fetching them from nodejs.org.
       - name: Install dependencies (lifecycle scripts execute here)
-        run: npm ci --ignore-scripts=false
+        env:
+          SKIP_INSTALL_SCRIPTS: snyk
+          SNYK_DISABLE_ANALYTICS: "1"
+        run: |
+          export npm_config_nodedir="$(dirname "$(dirname "$(command -v node)")")"
+          npm ci --ignore-scripts
+          pkgs=$(node -e '
+            const fs = require("fs");
+            const skip = process.env.SKIP_INSTALL_SCRIPTS.split(/\s+/);
+            const { packages } = require("./package-lock.json");
+            console.log(Object.entries(packages)
+              .filter(([p, v]) => p && v.hasInstallScript && fs.existsSync(p))
+              .map(([p]) => p.split("node_modules/").pop())
+              .filter((name) => !skip.includes(name))
+              .join(" "));
+          ')
+          if [ -n "$pkgs" ]; then npm rebuild --foreground-scripts $pkgs; fi
 
       - name: Let sensor settle
         if: always()
